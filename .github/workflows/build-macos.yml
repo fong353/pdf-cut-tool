@@ -1,0 +1,34 @@
+name: Build macOS M1
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple M1 arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pikepdf lxml pyinstaller
+
+      - name: Build executable
+        run: |
+          python -m PyInstaller --onefile --windowed \
+            --name "PDF切割线工具" \
+            --collect-all pikepdf \
+            --collect-all lxml \
+            cut_tool.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF切割线工具-macOS-M1
+          path: dist/
