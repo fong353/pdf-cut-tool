@@ -163,6 +163,36 @@ def build_circle_cut_stream(mc_key, cs_name, cx, cy, r):
     return b'\n'.join(lines)
 
 
+def split_combine_pdf(entries, out_path):
+    """
+    把多个 PDF 的页面按左半/右半/整页任意组合，输出新 PDF。
+    entries: [(src_pdf_path, page_index, 'L'|'R'|'F'), ...]
+    只改 MediaBox，不重编内容流，矢量/字体/ICC/专色全部保留。
+    """
+    src_cache = {}
+    out = pikepdf.Pdf.new()
+    try:
+        for src, idx, half in entries:
+            if src not in src_cache:
+                src_cache[src] = pikepdf.open(src)
+            src_pdf = src_cache[src]
+            page = src_pdf.pages[idx]
+            out.pages.append(page)
+            new_page = out.pages[-1]
+            mb = new_page.mediabox
+            x0, y0 = float(mb[0]), float(mb[1])
+            x1, y1 = float(mb[2]), float(mb[3])
+            mid = (x0 + x1) / 2
+            if half == 'L':
+                new_page.mediabox = [x0, y0, mid, y1]
+            elif half == 'R':
+                new_page.mediabox = [mid, y0, x1, y1]
+        out.save(out_path)
+    finally:
+        for pdf in src_cache.values():
+            pdf.close()
+
+
 def add_circle_cut(pdf_path, bleed_mm, out_path):
     """画圆切线。圆以页面中心为圆心，半径 = min(宽, 高)/2 - bleed_mm。"""
     with pikepdf.open(pdf_path) as pdf:

@@ -5,7 +5,7 @@ from tkinter import ttk, filedialog, messagebox, font
 import pikepdf
 
 from pdf_ops import (
-    PT_PER_MM, add_vertical_cuts, add_circle_cut,
+    PT_PER_MM, add_vertical_cuts, add_circle_cut, split_combine_pdf,
     is_image, image_to_pdf, read_image_size_mm,
 )
 from preview import PreviewPane
@@ -116,12 +116,15 @@ class App:
 
         self.tab_vertical = ttk.Frame(self.notebook, padding=12)
         self.tab_circle = ttk.Frame(self.notebook, padding=12)
+        self.tab_split = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(self.tab_vertical, text='竖切折页')
         self.notebook.add(self.tab_circle, text='圆切贴纸')
+        self.notebook.add(self.tab_split, text='拆页组合 (测试)')
         self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_change)
 
         self._build_vertical_tab(self.tab_vertical)
         self._build_circle_tab(self.tab_circle)
+        self._build_split_tab(self.tab_split)
 
         self.preview = PreviewPane(right)
         self.preview.pack(fill='both', expand=True)
@@ -170,6 +173,128 @@ class App:
 
         self.txt_vertical = self._make_info_text(parent, '  切割位置  ')
 
+    def _build_split_tab(self, parent):
+        self.split_entries = []  # [(src_path, page_idx, 'L'|'R'|'F', display_label)]
+
+        row = ttk.Frame(parent)
+        row.pack(fill='x')
+        ttk.Button(row, text='添加 PDF（拆左右）',
+                   command=self._split_add).pack(side='left')
+        ttk.Button(row, text='添加 PDF（整页）',
+                   command=lambda: self._split_add(whole=True)).pack(side='left', padx=(6, 0))
+        ttk.Button(row, text='删除选中',
+                   command=self._split_remove).pack(side='left', padx=(6, 0))
+        ttk.Button(row, text='清空', command=self._split_clear).pack(side='left', padx=(6, 0))
+
+        ttk.Label(parent, text='拖拽条目调整顺序 · 双击切换 左/右/整页',
+                  foreground='#888').pack(anchor='w', pady=(8, 2))
+
+        lf = ttk.Frame(parent)
+        lf.pack(fill='both', expand=True)
+        self.split_listbox = tk.Listbox(
+            lf, activestyle='dotbox', selectmode='single',
+            bg=self.BG_INPUT, fg=self.FG, relief='flat', bd=0,
+            highlightthickness=1, highlightbackground='#c2c2c2',
+            selectbackground='#0a84ff', selectforeground='#ffffff',
+        )
+        self.split_listbox.pack(side='left', fill='both', expand=True)
+        sb = ttk.Scrollbar(lf, orient='vertical', command=self.split_listbox.yview)
+        sb.pack(side='right', fill='y')
+        self.split_listbox.config(yscrollcommand=sb.set)
+
+        self._split_drag_idx = None
+        self.split_listbox.bind('<Button-1>', self._split_drag_start)
+        self.split_listbox.bind('<B1-Motion>', self._split_drag_move)
+        self.split_listbox.bind('<Double-Button-1>', self._split_toggle_half)
+
+        ttk.Button(parent, text='导出组合 PDF', style='Primary.TButton',
+                   command=self._generate_split).pack(fill='x', pady=(14, 0))
+
+    def _split_add(self, whole=False):
+        paths = filedialog.askopenfilenames(filetypes=[('PDF 文件', '*.pdf')])
+        if not paths:
+            return
+        for p in paths:
+            try:
+                with pikepdf.open(p) as pdf:
+                    n = len(pdf.pages)
+            except Exception as e:
+                messagebox.showerror('打开失败', f'{os.path.basename(p)}: {e}')
+                continue
+            for i in range(n):
+                if whole:
+                    self._split_append(p, i, 'F')
+                else:
+                    self._split_append(p, i, 'L')
+                    self._split_append(p, i, 'R')
+
+    def _split_append(self, src, idx, half):
+        self.split_entries.append((src, idx, half))
+        self.split_listbox.insert('end', self._split_label(src, idx, half))
+
+    def _split_label(self, src, idx, half):
+        tag = {'L': '左半', 'R': '右半', 'F': '整页'}[half]
+        return f'{os.path.basename(src)}  ·  第 {idx + 1} 页  ·  {tag}'
+
+    def _split_remove(self):
+        sel = self.split_listbox.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        self.split_entries.pop(i)
+        self.split_listbox.delete(i)
+
+    def _split_clear(self):
+        self.split_entries.clear()
+        self.split_listbox.delete(0, 'end')
+
+    def _split_drag_start(self, event):
+        self._split_drag_idx = self.split_listbox.nearest(event.y)
+
+    def _split_drag_move(self, event):
+        if self._split_drag_idx is None:
+            return
+        cur = self.split_listbox.nearest(event.y)
+        if cur < 0 or cur == self._split_drag_idx:
+            return
+        item = self.split_entries.pop(self._split_drag_idx)
+        label = self.split_listbox.get(self._split_drag_idx)
+        self.split_listbox.delete(self._split_drag_idx)
+        self.split_entries.insert(cur, item)
+        self.split_listbox.insert(cur, label)
+        self.split_listbox.selection_clear(0, 'end')
+        self.split_listbox.selection_set(cur)
+        self._split_drag_idx = cur
+
+    def _split_toggle_half(self, _event):
+        sel = self.split_listbox.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        src, idx, half = self.split_entries[i]
+        next_half = {'L': 'R', 'R': 'F', 'F': 'L'}[half]
+        self.split_entries[i] = (src, idx, next_half)
+        self.split_listbox.delete(i)
+        self.split_listbox.insert(i, self._split_label(src, idx, next_half))
+        self.split_listbox.selection_set(i)
+
+    def _generate_split(self):
+        if not self.split_entries:
+            messagebox.showwarning('提示', '列表为空，请先添加 PDF')
+            return
+        out = filedialog.asksaveasfilename(
+            defaultextension='.pdf',
+            filetypes=[('PDF 文件', '*.pdf')],
+            initialfile='组合.pdf',
+        )
+        if not out:
+            return
+        try:
+            split_combine_pdf(self.split_entries, out)
+            messagebox.showinfo('完成', f'已保存：\n{out}')
+        except Exception as e:
+            messagebox.showerror('生成失败', str(e))
+
     def _build_circle_tab(self, parent):
         row = ttk.Frame(parent)
         row.pack(fill='x')
@@ -203,7 +328,7 @@ class App:
     # ── 事件 ───────────────────────────────────
     def _on_tab_change(self, _event=None):
         idx = self.notebook.index('current')
-        self.active_tool = 'vertical' if idx == 0 else 'circle'
+        self.active_tool = ['vertical', 'circle', 'split'][idx]
         self._refresh()
 
     def _on_mode(self):
@@ -378,7 +503,7 @@ class App:
                    f'  出血:   {bleed:.2f} mm')
 
     def _redraw_overlay(self):
-        if not self.page_w_mm:
+        if not self.page_w_mm or self.active_tool == 'split':
             self.preview.clear_overlay()
             return
         if self.active_tool == 'circle':
