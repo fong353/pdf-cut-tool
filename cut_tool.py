@@ -124,8 +124,8 @@ class App:
         self.tab_split = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(self.tab_vertical, text='竖切折页')
         self.notebook.add(self.tab_circle, text='圆切贴纸')
-        self.notebook.add(self.tab_crop, text='角标裁切')
-        self.notebook.add(self.tab_split, text='拆页组合 (测试)')
+        # self.notebook.add(self.tab_crop, text='角标裁切')
+        # self.notebook.add(self.tab_split, text='拆页组合 (测试)')
         self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_change)
 
         self._build_vertical_tab(self.tab_vertical)
@@ -355,7 +355,7 @@ class App:
     # ── 事件 ───────────────────────────────────
     def _on_tab_change(self, _event=None):
         idx = self.notebook.index('current')
-        self.active_tool = ['vertical', 'circle', 'crop', 'split'][idx]
+        self.active_tool = ['vertical', 'circle'][idx]
         self._refresh()
 
     def _on_mode(self):

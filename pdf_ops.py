@@ -217,15 +217,19 @@ def add_crop_marks(pdf_path, out_path,
     doc = pymupdf.open(out_path)
     total = doc.page_count
     try:
+        font_size = 10
         for i in range(total):
             page = doc[i]
             rect = page.rect  # 扩展后的新页面（display 坐标, y-down）
             info = f'{src_name}   Page {i + 1}/{total}   {src_abspath}'
-            # baseline 放在底部 margin 带的中间偏下一点
-            point = pymupdf.Point(rect.x0 + 5, rect.y1 - margin_pt / 2 + 2)
             page.insert_font(fontname='china-s')
-            page.insert_text(point, info, fontname='china-s',
-                             fontsize=6, color=(0, 0, 0))
+            text_w = pymupdf.get_text_length(info, fontname='china-s', fontsize=font_size)
+            # 水平居中；垂直居中于底部 margin 带（贴到内容边也无妨，出血会裁掉）
+            x = (rect.x0 + rect.x1) / 2 - text_w / 2
+            y = rect.y1 - margin_pt / 2 + font_size / 2
+            page.insert_text(pymupdf.Point(x, y), info,
+                             fontname='china-s', fontsize=font_size,
+                             color=(0, 0, 0))
         doc.save(out_path, incremental=True,
                  encryption=pymupdf.PDF_ENCRYPT_KEEP)
     finally:
