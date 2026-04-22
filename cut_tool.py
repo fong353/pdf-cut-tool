@@ -189,7 +189,8 @@ class App:
             f'  标记:   {CROP_MARK_LEN_MM:.0f} mm（L 形每臂长度）\n'
             f'  间隙:   {CROP_GAP_MM:.0f} mm（距原 MediaBox 的空白）\n'
             f'  颜色:   纯黑 K100%\n'
-            f'  线宽:   0.25 pt'
+            f'  线宽:   0.25 pt\n'
+            f'  页脚:   文件名 · 页码 · 路径（底部 margin）'
         )
         self.txt_crop = self._make_info_text(parent, '  参数（固定）  ')
         self.txt_crop.config(state='normal')
