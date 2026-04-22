@@ -163,6 +163,55 @@ def build_circle_cut_stream(mc_key, cs_name, cx, cy, r):
     return b'\n'.join(lines)
 
 
+def add_crop_marks(pdf_path, out_path,
+                   margin_mm=10.0, mark_len_mm=3.0, gap_mm=3.0, lw_pt=0.25):
+    """
+    在每页 4 角加标准裁切标记（人眼对齐用，黑色）。
+    把 MediaBox 向外各扩 margin_mm，原内容位置不变，在原 MediaBox 四角画 L 形标记。
+    """
+    margin_pt = margin_mm * PT_PER_MM
+    mlen = mark_len_mm * PT_PER_MM
+    gap = gap_mm * PT_PER_MM
+
+    with pikepdf.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            mb = page.mediabox
+            x0, y0 = float(mb[0]), float(mb[1])
+            x1, y1 = float(mb[2]), float(mb[3])
+
+            lines = [b'q', b'0 0 0 1 K', f'{lw_pt:.3f} w'.encode()]
+            for cx, cy, sx, sy in [
+                (x0, y0, -1, -1), (x1, y0, +1, -1),
+                (x0, y1, -1, +1), (x1, y1, +1, +1),
+            ]:
+                # 水平臂
+                lines.append(f'{cx + sx * gap:.4f} {cy:.4f} m'.encode())
+                lines.append(f'{cx + sx * (gap + mlen):.4f} {cy:.4f} l'.encode())
+                # 垂直臂
+                lines.append(f'{cx:.4f} {cy + sy * gap:.4f} m'.encode())
+                lines.append(f'{cx:.4f} {cy + sy * (gap + mlen):.4f} l'.encode())
+            lines.append(b'S')
+            lines.append(b'Q')
+            new_stream = pdf.make_stream(b'\n'.join(lines))
+
+            # 扩页
+            page.mediabox = [x0 - margin_pt, y0 - margin_pt,
+                             x1 + margin_pt, y1 + margin_pt]
+
+            if '/PieceInfo' in page:
+                del page['/PieceInfo']
+
+            contents = page.get('/Contents')
+            if contents is None:
+                page['/Contents'] = new_stream
+            elif isinstance(contents, pikepdf.Array):
+                contents.append(new_stream)
+            else:
+                page['/Contents'] = pikepdf.Array([contents, new_stream])
+
+        pdf.save(out_path)
+
+
 def split_combine_pdf(entries, out_path):
     """
     把多个 PDF 的页面按左半/右半/整页任意组合，输出新 PDF。

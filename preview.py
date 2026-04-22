@@ -79,6 +79,36 @@ class PreviewPane(tk.Frame):
                 fill=LINE_COLOR, width=1, tags=OVERLAY_TAG,
             )
 
+    def set_overlay_crop(self, mark_len_mm, gap_mm):
+        """清空叠加层，在 MediaBox 4 角画 L 形裁切标记（向外）。"""
+        self.canvas.delete(OVERLAY_TAG)
+        if not self.page_w_mm:
+            return
+        color = '#000000'
+        gap_px = gap_mm * self._mm_to_px
+        len_px = mark_len_mm * self._mm_to_px
+        # (mm 坐标, 方向 sx/sy：sx 控制 x 延伸方向, sy 控制 PDF 的 y 方向)
+        for (x_mm, y_mm, sx, sy) in [
+            (0, 0, -1, -1),
+            (self.page_w_mm, 0, +1, -1),
+            (0, self.page_h_mm, -1, +1),
+            (self.page_w_mm, self.page_h_mm, +1, +1),
+        ]:
+            cx = self.mm_to_canvas_x(x_mm)
+            cy = self.mm_to_canvas_y(y_mm)
+            # 水平臂
+            self.canvas.create_line(
+                cx + sx * gap_px, cy,
+                cx + sx * (gap_px + len_px), cy,
+                fill=color, width=1, tags=OVERLAY_TAG,
+            )
+            # 垂直臂：canvas y 向下增长，PDF y 向上增长，sy 反向映射
+            self.canvas.create_line(
+                cx, cy - sy * gap_px,
+                cx, cy - sy * (gap_px + len_px),
+                fill=color, width=1, tags=OVERLAY_TAG,
+            )
+
     def set_overlay_circle(self, cx_mm, cy_mm, r_mm):
         """清空叠加层，画一个圆。"""
         self.canvas.delete(OVERLAY_TAG)

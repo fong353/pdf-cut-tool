@@ -5,9 +5,13 @@ from tkinter import ttk, filedialog, messagebox, font
 import pikepdf
 
 from pdf_ops import (
-    PT_PER_MM, add_vertical_cuts, add_circle_cut, split_combine_pdf,
+    PT_PER_MM, add_vertical_cuts, add_circle_cut, add_crop_marks, split_combine_pdf,
     is_image, image_to_pdf, read_image_size_mm,
 )
+
+CROP_MARGIN_MM = 10.0
+CROP_MARK_LEN_MM = 3.0
+CROP_GAP_MM = 3.0
 from preview import PreviewPane
 
 
@@ -116,14 +120,17 @@ class App:
 
         self.tab_vertical = ttk.Frame(self.notebook, padding=12)
         self.tab_circle = ttk.Frame(self.notebook, padding=12)
+        self.tab_crop = ttk.Frame(self.notebook, padding=12)
         self.tab_split = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(self.tab_vertical, text='竖切折页')
         self.notebook.add(self.tab_circle, text='圆切贴纸')
+        self.notebook.add(self.tab_crop, text='角标裁切')
         self.notebook.add(self.tab_split, text='拆页组合 (测试)')
         self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_change)
 
         self._build_vertical_tab(self.tab_vertical)
         self._build_circle_tab(self.tab_circle)
+        self._build_crop_tab(self.tab_crop)
         self._build_split_tab(self.tab_split)
 
         self.preview = PreviewPane(right)
@@ -172,6 +179,25 @@ class App:
                    command=self._generate_vertical).pack(fill='x', pady=(14, 10))
 
         self.txt_vertical = self._make_info_text(parent, '  切割位置  ')
+
+    def _build_crop_tab(self, parent):
+        ttk.Label(parent,
+                  text='在 4 角自动绘制标准裁切标记（人眼对齐用）',
+                  foreground='#666').pack(anchor='w')
+        info = (
+            f'  外扩:   {CROP_MARGIN_MM:.0f} mm（新 MediaBox 每边外扩）\n'
+            f'  标记:   {CROP_MARK_LEN_MM:.0f} mm（L 形每臂长度）\n'
+            f'  间隙:   {CROP_GAP_MM:.0f} mm（距原 MediaBox 的空白）\n'
+            f'  颜色:   纯黑 K100%\n'
+            f'  线宽:   0.25 pt'
+        )
+        self.txt_crop = self._make_info_text(parent, '  参数（固定）  ')
+        self.txt_crop.config(state='normal')
+        self.txt_crop.insert('1.0', info)
+        self.txt_crop.config(state='disabled')
+
+        ttk.Button(parent, text='生成带角标 PDF', style='Primary.TButton',
+                   command=self._generate_crop).pack(fill='x', pady=(14, 0))
 
     def _build_split_tab(self, parent):
         self.split_entries = []  # [(src_path, page_idx, 'L'|'R'|'F', display_label)]
@@ -328,7 +354,7 @@ class App:
     # ── 事件 ───────────────────────────────────
     def _on_tab_change(self, _event=None):
         idx = self.notebook.index('current')
-        self.active_tool = ['vertical', 'circle', 'split'][idx]
+        self.active_tool = ['vertical', 'circle', 'crop', 'split'][idx]
         self._refresh()
 
     def _on_mode(self):
@@ -506,6 +532,9 @@ class App:
         if not self.page_w_mm or self.active_tool == 'split':
             self.preview.clear_overlay()
             return
+        if self.active_tool == 'crop':
+            self.preview.set_overlay_crop(CROP_MARK_LEN_MM, CROP_GAP_MM)
+            return
         if self.active_tool == 'circle':
             bleed = self._current_circle_bleed_preview()
             r = min(self.page_w_mm, self.page_h_mm) / 2 - bleed
@@ -561,6 +590,21 @@ class App:
         out = self._make_out_path()
         try:
             add_circle_cut(self.pdf_path, bleed_mm, out)
+            messagebox.showinfo('完成', f'已保存：\n{out}')
+        except Exception as e:
+            messagebox.showerror('生成失败', str(e))
+
+    def _generate_crop(self):
+        if not self.pdf_path:
+            messagebox.showwarning('提示', '请先选择文件')
+            return
+        base, _ = os.path.splitext(self.src_path)
+        out = base + '_mark.pdf'
+        try:
+            add_crop_marks(self.pdf_path, out,
+                           margin_mm=CROP_MARGIN_MM,
+                           mark_len_mm=CROP_MARK_LEN_MM,
+                           gap_mm=CROP_GAP_MM)
             messagebox.showinfo('完成', f'已保存：\n{out}')
         except Exception as e:
             messagebox.showerror('生成失败', str(e))
