@@ -86,3 +86,14 @@ python -m PyInstaller --onefile --windowed --name "PDF切割线工具" \
 ```
 
 输出：`dist/PDF切割线工具.exe`（加 pymupdf 后约 55MB，单文件，无需 Python 环境）
+
+---
+
+## Cursor 记忆迁移（2026-08-06）
+
+已放弃 Claude Code。原 `~/.claude/projects/*/memory` 已备份到 `~/Documents/claude-memory-backup-20260806/`，并迁入：
+
+- `.cursor/rules/claude-memory-*.mdc` — 常驻/按需规则
+- `.cursor/skills/claude-memory/` — 完整记忆正文（`references/`；凭据在 `private/` 且 gitignore）
+
+本 `AGENTS.md` 仍由 Cursor 读取；细节踩坑优先查 skill。
