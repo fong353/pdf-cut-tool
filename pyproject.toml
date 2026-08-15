@@ -1,0 +1,16 @@
+[project]
+name = "pdf-cut-tool"
+version = "0.1.0"
+description = "折页机 PDF CUT 专色切割线 Web 服务(内网)"
+requires-python = ">=3.10"
+dependencies = [
+    "pikepdf>=9.0",
+    "pymupdf>=1.24",
+    "Pillow>=10.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.9",
+]
+
+[tool.uv]
+package = false

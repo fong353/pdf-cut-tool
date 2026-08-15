@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PDF CUT 切割线 Web 实例 LaunchAgent(mac-company,占 :8841)。
+  首装:把本文件拷到 ~/Library/LaunchAgents/ 后 bootstrap。
+  日常更新: cd ~/projects/deploy-kit && ./deploy.sh pdf-cut-tool
+  校验: curl http://127.0.0.1:8841/api/health
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dayin.pdf-cut-tool</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/g/.local/bin/uv</string>
+        <string>run</string>
+        <string>uvicorn</string>
+        <string>server.main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8841</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/g/pdf-cut-tool</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/g/.local/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/g/pdf-cut-tool/data/service.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/g/pdf-cut-tool/data/service.err.log</string>
+</dict>
+</plist>

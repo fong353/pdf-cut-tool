@@ -1,16 +1,23 @@
 # PDF CUT 切割线工具
 
-为折页印刷切割机生成 PDF CUT 路径的桌面工具。
+为折页印刷切割机生成 PDF CUT 路径。员工入口是 **mac-company 上的 Web**；`pdf_ops.py` 是切割逻辑真相源。
+
+## 员工入口
+
+- 地址：`http://192.168.0.110:8841`（公司 LAN）/ `http://100.64.0.7:8841`（Tailnet）
+- 独立进程，**不挂 ru-dan-web、不改入单系统**
+- launchd `com.dayin.pdf-cut-tool`，KeepAlive
+- 日常更新：`cd ~/projects/deploy-kit && ./deploy.sh pdf-cut-tool`
 
 ## 项目结构
 
 ```
-cut_tool.py          # 入口 + tkinter UI（App 类）
-pdf_ops.py           # PDF 处理（切割线生成，机器识别验证过，字节级稳定，不要动）
-preview.py           # PyMuPDF 渲染首页位图 + Canvas 叠加切割线/外框
-PDF切割线工具.spec   # PyInstaller 打包配置
-dist/PDF切割线工具.exe  # 打包后的可执行文件
-.venv/                # 本地开发 venv（基于 brew python3.14 + python-tk@3.14）
+server/main.py              # FastAPI 薄封装（上传 / 预览 / 生成）
+server/static/index.html    # 单页 UI
+pdf_ops.py                  # PDF 处理（切割线生成，机器识别验证过，字节级稳定，不要动）
+cut_tool.py / preview.py    # 旧 tkinter 桌面，本机兜底，不是员工入口
+deploy/com.dayin.pdf-cut-tool.plist
+pyproject.toml              # uv 依赖（含 FastAPI）
 ```
 
 ## 项目约定
@@ -26,6 +33,8 @@ dist/PDF切割线工具.exe  # 打包后的可执行文件
 ```
 [/Separation /CUT /DeviceCMYK <<tint function: C1=[0,0,0,1]>>]
 ```
+
+（代码里 tint 实际是肉眼红 `C1=[0,1,1,0]`，机器认专色名。）
 
 生成的 CUT 路径写入独立的 PDF 内容流，包裹在 `/Layer /MCn BDC ... EMC` 标记内，同时在页面 `Resources/Properties` 里注册 Illustrator 兼容的图层元数据（Title="CUT"）。
 
@@ -53,6 +62,8 @@ dist/PDF切割线工具.exe  # 打包后的可执行文件
 - 计算累计切割位置
 - 显示剩余量；剩余 < 100mm 红字警告
 
+**圆切贴纸**：圆心=页中心，半径 = min(宽,高)/2 − 出血 mm。方图（|w−h|&lt;1mm）上传后自动切到此 tab。
+
 ## 兼容性说明
 
 - **RIP / Acrobat**：直接读 PDF 内容流，始终可见 CUT 路径
@@ -61,31 +72,24 @@ dist/PDF切割线工具.exe  # 打包后的可执行文件
 ## 依赖
 
 ```
-pikepdf       # PDF 读写（切割线注入）
-pymupdf       # 预览：渲染 PDF 首页为位图
-Pillow        # 预览：位图转 tkinter 可显示格式
+pikepdf / pymupdf / Pillow   # 切割 + 预览位图
+fastapi / uvicorn            # Web
 ```
-
-tkinter 为 Python 标准库，但 macOS 需要可用的 Tcl/Tk：
-`brew install python@3.14 python-tk@3.14`（Apple 自带 python3.9 的 Tk 在 macOS 15+ 上崩溃）。
 
 ## 本地运行（macOS 开发）
 
 ```bash
-/opt/homebrew/bin/python3.14 -m venv .venv
-source .venv/bin/activate
-pip install pikepdf pymupdf Pillow
-python cut_tool.py
+cd ~/projects/pdf-cut-tool
+uv sync
+uv run uvicorn server.main:app --host 127.0.0.1 --port 18841
 ```
 
-## 打包 EXE
+旧桌面：`uv run python cut_tool.py`（需要可用的 Tcl/Tk）。
 
-```bash
-python -m PyInstaller --onefile --windowed --name "PDF切割线工具" \
-    --collect-all pikepdf --collect-all lxml --collect-all pymupdf cut_tool.py
-```
+## 部署
 
-输出：`dist/PDF切割线工具.exe`（加 pymupdf 后约 55MB，单文件，无需 Python 环境）
+目标机代码路径 `~/pdf-cut-tool`（ASCII）。首装见 deploy-kit `docs/onboard-new-tool.md`。
+推代码前必须先 commit（bundle 只含已提交内容）。
 
 ---
 

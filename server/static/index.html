@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF 切割线</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #fff; --ink: #1f2937; --sub: #6b7280;
+    --brand: #0b6e99; --brand-dk: #095b7f; --ok: #16a34a; --err: #dc2626;
+    --line: #e5e7eb; --cut: #e60000;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 system-ui, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  .tag { color: var(--sub); font-size: 14px; margin-bottom: 16px; }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 12px;
+  }
+  .step { font-weight: 600; margin-bottom: 10px; }
+  #drop {
+    border: 2px dashed #b9c4d0; border-radius: 12px; padding: 28px 14px;
+    text-align: center; color: var(--sub); cursor: pointer; transition: .15s;
+  }
+  #drop.hover, #drop:hover { border-color: var(--brand); background: #e9f3f7; }
+  #drop .big { font-size: 17px; color: var(--ink); }
+  .filemeta { display: none; font-size: 14px; }
+  .filemeta .name { font-weight: 600; word-break: break-all; }
+  .filemeta .dim { color: var(--sub); margin-top: 2px; }
+  .filemeta button {
+    border: 0; background: none; color: var(--brand); cursor: pointer;
+    padding: 0; text-decoration: underline; margin-top: 6px;
+  }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tab {
+    flex: 1; border: 2px solid var(--line); background: #fff; border-radius: 10px;
+    padding: 8px 10px; cursor: pointer; font-weight: 600; font-size: 14px;
+  }
+  .tab.on { border-color: var(--brand); background: #e9f3f7; }
+  .modes { display: flex; gap: 14px; margin-bottom: 10px; font-size: 15px; }
+  .modes label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+  .row label { color: var(--sub); min-width: 4.5em; }
+  input[type=text], input[type=number] {
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 15px; background: #fff;
+  }
+  input[type=number] { width: 72px; }
+  #segments { width: 100%; max-width: 260px; }
+  .hint { color: var(--sub); font-size: 13px; }
+  .info {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 1.5; color: var(--ink);
+    background: #fafafa; border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; min-height: 88px; white-space: pre-wrap; margin-top: 10px;
+  }
+  .info .warn { color: var(--err); font-weight: 600; }
+  .info .muted { color: var(--sub); }
+  #go {
+    width: 100%; padding: 13px; font-size: 17px; font-weight: 600;
+    background: var(--brand); color: #fff; border: 0; border-radius: 12px;
+    cursor: pointer; margin-top: 12px;
+  }
+  #go:hover { background: var(--brand-dk); }
+  #go:disabled { background: #b9c4d0; cursor: not-allowed; }
+  .errline { color: var(--err); background: #fdf0f0; border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  .okline { color: var(--ok); font-weight: 600; margin-top: 10px; font-size: 14px; }
+  .preview-card { min-height: 420px; }
+  .preview-wrap {
+    position: relative; background: #ededed; border-radius: 10px; overflow: hidden;
+    min-height: 380px; display: flex; align-items: center; justify-content: center;
+  }
+  .preview-wrap canvas { max-width: 100%; max-height: 72vh; display: block; }
+  .preview-empty { color: var(--sub); padding: 40px 16px; text-align: center; }
+  .hide { display: none !important; }
+  footer { text-align: center; color: #9aa8b6; font-size: 13px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>PDF 切割线</h1>
+  <div class="tag">给折页机加 CUT 专色切割线 · 上传后调参数看预览，再下载</div>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <div class="step">1. 选择 PDF 或图片</div>
+        <div id="drop">
+          <div class="big">拖到这里，或点击选择</div>
+          <div>PDF / PNG / JPG / TIFF · 单文件不超过 80MB</div>
+        </div>
+        <div class="filemeta" id="filemeta">
+          <div class="name" id="fname"></div>
+          <div class="dim" id="fdim"></div>
+          <button type="button" id="reselect">重新选</button>
+        </div>
+        <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,application/pdf,image/*" hidden>
+      </div>
+
+      <div class="card">
+        <div class="step">2. 切割方式</div>
+        <div class="tabs">
+          <button type="button" class="tab on" data-tool="vertical">竖切折页</button>
+          <button type="button" class="tab" data-tool="circle">圆切贴纸</button>
+        </div>
+
+        <div id="panel-vertical">
+          <div class="modes">
+            <label><input type="radio" name="mode" value="equal" checked> 等分</label>
+            <label><input type="radio" name="mode" value="custom"> 自定义 (mm)</label>
+          </div>
+          <div class="row" id="row-equal">
+            <label>份数</label>
+            <input type="number" id="n" min="2" step="1" value="3">
+          </div>
+          <div class="row hide" id="row-custom">
+            <label>段宽</label>
+            <input type="text" id="segments" placeholder="200, 200, 479.9">
+            <span class="hint">mm，逗号分隔</span>
+          </div>
+          <div class="row">
+            <label>外框出血</label>
+            <input type="number" id="inset" min="0" step="0.1" value="0.3">
+            <span class="hint">mm / 边</span>
+          </div>
+        </div>
+
+        <div id="panel-circle" class="hide">
+          <div class="row">
+            <label>出血</label>
+            <input type="number" id="bleed" min="0" step="0.1" value="2">
+            <span class="hint">mm（圆距离图边的距离）</span>
+          </div>
+        </div>
+
+        <div class="info" id="info"><span class="muted">（请先选择 PDF 或图片）</span></div>
+        <button type="button" id="go" disabled>生成竖切 PDF</button>
+        <div id="msg"></div>
+      </div>
+    </div>
+
+    <div class="card preview-card">
+      <div class="step">预览（首页）</div>
+      <div class="preview-wrap" id="pwrap">
+        <div class="preview-empty" id="pempty">上传后在这里看切割线位置</div>
+        <canvas id="cv" class="hide"></canvas>
+      </div>
+    </div>
+  </div>
+  <footer>内网工具 · 结果保留 1 天</footer>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const drop = $("drop");
+  const fileInput = $("file");
+  const filemeta = $("filemeta");
+  const infoEl = $("info");
+  const msgEl = $("msg");
+  const go = $("go");
+  const cv = $("cv");
+  const ctx = cv.getContext("2d");
+  const pempty = $("pempty");
+
+  let session = null;
+  let img = null;
+  let tool = "vertical";
+  let mode = "equal";
+
+  function showErr(t) {
+    msgEl.innerHTML = t ? `<div class="errline">${t}</div>` : "";
+  }
+  function showOk(t) {
+    msgEl.innerHTML = t ? `<div class="okline">${t}</div>` : "";
+  }
+
+  function currentMode() {
+    return tool === "circle" ? "circle" : mode;
+  }
+
+  function parseSegs(raw) {
+    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return null;
+    const segs = [];
+    for (const p of parts) {
+      const v = Number(p);
+      if (!Number.isFinite(v)) return null;
+      segs.push(v);
+    }
+    return segs;
+  }
+
+  function positions() {
+    if (!session) return [];
+    if (mode === "equal") {
+      const n = parseInt($("n").value, 10);
+      if (!n || n < 2) return [];
+      const step = session.w_mm / n;
+      const out = [];
+      for (let i = 1; i < n; i++) out.push(step * i);
+      return out;
+    }
+    const segs = parseSegs($("segments").value);
+    if (!segs) return [];
+    const cuts = [];
+    let total = 0;
+    for (const s of segs) {
+      total += s;
+      cuts.push(total);
+    }
+    return cuts;
+  }
+
+  function fillInfo() {
+    if (!session) {
+      infoEl.innerHTML = '<span class="muted">（请先选择 PDF 或图片）</span>';
+      return;
+    }
+    if (tool === "circle") {
+      const bleed = Number($("bleed").value);
+      const side = Math.min(session.w_mm, session.h_mm);
+      const r = side / 2 - bleed;
+      if (!Number.isFinite(bleed) || r <= 0) {
+        infoEl.innerHTML = `<span class="warn">  出血 ${$("bleed").value}mm 过大，圆半径 ≤ 0</span>`;
+        return;
+      }
+      const cx = session.w_mm / 2;
+      const cy = session.h_mm / 2;
+      infoEl.textContent =
+        `  圆心:   (${cx.toFixed(2)}, ${cy.toFixed(2)}) mm\n` +
+        `  半径:   ${r.toFixed(2)} mm\n` +
+        `  直径:   ${(r * 2).toFixed(2)} mm\n` +
+        `  出血:   ${bleed.toFixed(2)} mm`;
+      return;
+    }
+    if (mode === "equal") {
+      const pos = positions();
+      if (!pos.length) {
+        infoEl.innerHTML = '<span class="muted">（请输入份数）</span>';
+        return;
+      }
+      infoEl.textContent = pos.map((p, i) =>
+        `  ${String(i + 1).padStart(2)}.  x = ${p.toFixed(2).padStart(7)} mm`
+      ).join("\n");
+      return;
+    }
+    const segs = parseSegs($("segments").value);
+    if (!segs) {
+      infoEl.innerHTML = '<span class="muted">（输入段宽，如: 200, 200, 200）</span>';
+      return;
+    }
+    const cuts = [];
+    let total = 0;
+    for (const s of segs) { total += s; cuts.push(total); }
+    const remaining = session.w_mm - total;
+    const warn = remaining > 0 && remaining < 100;
+    let html = '<span class="muted">  段宽：</span>\n';
+    html += segs.map((s, i) =>
+      `    ${String(i + 1).padStart(2)}.  ${s.toFixed(2).padStart(7)} mm`
+    ).join("\n");
+    if (remaining !== 0) {
+      html += `\n\n<span class="muted">  剩余：</span>`;
+      html += warn
+        ? `<span class="warn"> ${remaining.toFixed(2)} mm   ⚠ 尾料不足 10cm</span>`
+        : ` ${remaining.toFixed(2)} mm`;
+    }
+    if (cuts.length) {
+      html += `\n\n<span class="muted">  切割位置：</span>\n`;
+      html += cuts.map((x) => `    x = ${x.toFixed(2).padStart(7)} mm`).join("\n");
+    }
+    infoEl.innerHTML = html;
+  }
+
+  function draw() {
+    if (!img || !session) return;
+    const maxW = $("pwrap").clientWidth - 8;
+    const maxH = Math.max(380, window.innerHeight * 0.72);
+    const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = w * dpr;
+    cv.height = h * dpr;
+    cv.style.width = w + "px";
+    cv.style.height = h + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const mm = w / session.w_mm;
+    ctx.strokeStyle = "#e60000";
+    ctx.lineWidth = 1;
+    if (tool === "circle") {
+      const bleed = Number($("bleed").value);
+      const r = Math.min(session.w_mm, session.h_mm) / 2 - bleed;
+      if (r > 0) {
+        ctx.beginPath();
+        ctx.arc(session.w_mm / 2 * mm, session.h_mm / 2 * mm, r * mm, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else {
+      const inset = Number($("inset").value);
+      if (Number.isFinite(inset)) {
+        ctx.strokeRect(inset * mm, inset * mm, (session.w_mm - 2 * inset) * mm, (session.h_mm - 2 * inset) * mm);
+      }
+      for (const x of positions()) {
+        const px = x * mm;
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, h);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function refresh() {
+    fillInfo();
+    draw();
+    go.disabled = !session;
+    go.textContent = tool === "circle" ? "生成圆切 PDF" : "生成竖切 PDF";
+  }
+
+  function setTool(next) {
+    tool = next;
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tool === next));
+    $("panel-vertical").classList.toggle("hide", next !== "vertical");
+    $("panel-circle").classList.toggle("hide", next !== "circle");
+    refresh();
+  }
+
+  document.querySelectorAll(".tab").forEach((t) => {
+    t.onclick = () => setTool(t.dataset.tool);
+  });
+  document.querySelectorAll("input[name=mode]").forEach((el) => {
+    el.onchange = () => {
+      mode = el.value;
+      $("row-equal").classList.toggle("hide", mode !== "equal");
+      $("row-custom").classList.toggle("hide", mode !== "custom");
+      refresh();
+    };
+  });
+  ["n", "segments", "inset", "bleed"].forEach((id) => {
+    $(id).addEventListener("input", refresh);
+  });
+
+  async function upload(file) {
+    showErr("");
+    showOk("");
+    const fd = new FormData();
+    fd.append("file", file);
+    go.disabled = true;
+    drop.querySelector(".big").textContent = "正在读取…";
+    try {
+      const res = await fetch("/api/sessions", { method: "POST", body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "上传失败");
+      session = data;
+      filemeta.style.display = "block";
+      drop.style.display = "none";
+      $("fname").textContent = data.name;
+      let dim = `${data.w_mm.toFixed(1)} × ${data.h_mm.toFixed(1)} mm`;
+      if (data.page_count > 1) dim += ` · 共 ${data.page_count} 页，预览第 1 页，切割写到每一页`;
+      $("fdim").textContent = dim;
+      img = new Image();
+      img.onload = () => {
+        pempty.classList.add("hide");
+        cv.classList.remove("hide");
+        refresh();
+      };
+      img.src = data.preview_url + "?t=" + Date.now();
+      setTool(data.suggest === "circle" ? "circle" : "vertical");
+    } catch (e) {
+      showErr(e.message || String(e));
+      go.disabled = !session;
+    } finally {
+      drop.querySelector(".big").textContent = "拖到这里，或点击选择";
+    }
+  }
+
+  function resetFile() {
+    session = null;
+    img = null;
+    fileInput.value = "";
+    filemeta.style.display = "none";
+    drop.style.display = "block";
+    cv.classList.add("hide");
+    pempty.classList.remove("hide");
+    showErr("");
+    showOk("");
+    refresh();
+  }
+
+  drop.onclick = () => fileInput.click();
+  $("reselect").onclick = () => { resetFile(); fileInput.click(); };
+  fileInput.onchange = () => { if (fileInput.files[0]) upload(fileInput.files[0]); };
+  ["dragenter", "dragover"].forEach((ev) => {
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("hover"); });
+  });
+  ["dragleave", "drop"].forEach((ev) => {
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("hover"); });
+  });
+  drop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer.files[0];
+    if (f) upload(f);
+  });
+  window.addEventListener("resize", () => { if (img) draw(); });
+
+  go.onclick = async () => {
+    if (!session) return;
+    showErr("");
+    showOk("");
+    const body = { mode: currentMode() };
+    if (body.mode === "equal") body.n = parseInt($("n").value, 10);
+    if (body.mode === "custom") body.segments = $("segments").value;
+    if (body.mode === "circle") body.bleed_mm = Number($("bleed").value);
+    else body.inset_mm = Number($("inset").value);
+    go.disabled = true;
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/cut`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.detail === "string" ? data.detail : "生成失败");
+      }
+      const blob = await res.blob();
+      let name = `${session.name.replace(/\.[^.]+$/, "")}_cut.pdf`;
+      const cd = res.headers.get("content-disposition") || "";
+      const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^";]+)/i);
+      if (m) name = decodeURIComponent(m[1]);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showOk("已开始下载 " + name);
+    } catch (e) {
+      showErr(e.message || String(e));
+    } finally {
+      go.disabled = !session;
+    }
+  };
+
+  refresh();
+})();
+</script>
+</body>
+</html>

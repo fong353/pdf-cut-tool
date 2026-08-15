@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 build/
 dist/
+data/
 *.spec.bak
 示例*.pdf
 示例*.zip
