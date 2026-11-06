@@ -53,12 +53,18 @@
   .modes label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
   .row label { color: var(--sub); min-width: 4.5em; }
-  input[type=text], input[type=number] {
+  input[type=number] {
     padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
-    font-size: 15px; background: #fff;
+    font-size: 15px; background: #fff; width: 72px;
   }
-  input[type=number] { width: 72px; }
-  #segments { width: 100%; max-width: 260px; }
+  .segment-row label { display: flex; align-items: center; gap: 8px; }
+  .segment-row input { width: 104px; }
+  .segment-action {
+    min-width: 34px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; color: var(--brand); font: inherit; font-size: 14px; cursor: pointer;
+  }
+  .segment-action:hover:not(:disabled) { background: #e9f3f7; }
+  .segment-action:disabled { opacity: .45; cursor: default; }
   .hint { color: var(--sub); font-size: 13px; }
   .info {
     font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -125,10 +131,19 @@
             <label>份数</label>
             <input type="number" id="n" min="2" step="1" value="3">
           </div>
-          <div class="row hide" id="row-custom">
-            <label>段宽</label>
-            <input type="text" id="segments" placeholder="200, 200, 479.9">
-            <span class="hint">mm，逗号分隔</span>
+          <div class="hide" id="row-custom">
+            <div id="segments"></div>
+            <template id="segment-template">
+              <div class="row segment-row">
+                <label>
+                  <span class="segment-name"></span>
+                  <input type="number" min="0" step="any" inputmode="decimal" placeholder="宽度">
+                  <span class="hint">mm</span>
+                </label>
+                <button type="button" class="segment-action">−</button>
+              </div>
+            </template>
+            <button type="button" id="add-segment" class="segment-action">＋ 添加一段</button>
           </div>
           <div class="row modes">
             <label>
@@ -178,6 +193,9 @@
   const infoEl = $("info");
   const msgEl = $("msg");
   const go = $("go");
+  const segmentList = $("segments");
+  const segmentTemplate = $("segment-template");
+  const segmentHelp = "请填写每段宽度（mm），数值须大于 0";
   const addBorder = $("add-border");
   const insetInput = $("inset");
   const cv = $("cv");
@@ -200,19 +218,38 @@
     return tool === "circle" ? "circle" : mode;
   }
 
-  function parseSegs(raw) {
-    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    if (!parts.length) return null;
-    const segs = [];
-    for (const p of parts) {
-      const v = Number(p);
-      if (!Number.isFinite(v)) return null;
-      segs.push(v);
-    }
-    return segs;
+  function updateSegmentRows() {
+    const rows = Array.from(segmentList.children);
+    rows.forEach((row, index) => {
+      const name = `第 ${index + 1} 段`;
+      row.querySelector(".segment-name").textContent = name;
+      const remove = row.querySelector("button");
+      remove.setAttribute("aria-label", `删除${name}`);
+      remove.disabled = rows.length === 1;
+    });
   }
 
-  function positions() {
+  function addSegmentRow() {
+    const row = segmentTemplate.content.firstElementChild.cloneNode(true);
+    row.querySelector("button").onclick = () => {
+      const neighbor = row.nextElementSibling || row.previousElementSibling;
+      row.remove();
+      updateSegmentRows();
+      neighbor.querySelector("input").focus();
+      showErr("");
+      refresh();
+    };
+    segmentList.append(row);
+    updateSegmentRows();
+    return row.querySelector("input");
+  }
+
+  function segmentWidths() {
+    const widths = Array.from(segmentList.querySelectorAll("input"), (input) => input.valueAsNumber);
+    return widths.every((width) => Number.isFinite(width) && width > 0) ? widths : null;
+  }
+
+  function positions(widths = null) {
     if (!session) return [];
     if (mode === "equal") {
       const n = parseInt($("n").value, 10);
@@ -222,7 +259,7 @@
       for (let i = 1; i < n; i++) out.push(step * i);
       return out;
     }
-    const segs = parseSegs($("segments").value);
+    const segs = widths ?? segmentWidths();
     if (!segs) return [];
     const cuts = [];
     let total = 0;
@@ -273,15 +310,13 @@
       ].join("\n");
       return;
     }
-    const segs = parseSegs($("segments").value);
+    const segs = segmentWidths();
     if (!segs) {
-      infoEl.innerHTML = '<span class="muted">（输入段宽，如: 200, 200, 200）</span>';
+      infoEl.innerHTML = `<span class="muted">${segmentHelp}</span>`;
       return;
     }
-    const cuts = [];
-    let total = 0;
-    for (const s of segs) { total += s; cuts.push(total); }
-    const remaining = session.w_mm - total;
+    const cuts = positions(segs);
+    const remaining = session.w_mm - cuts[cuts.length - 1];
     const warn = remaining > 0 && remaining < 100;
     let html = '<span class="muted">  段宽：</span>\n';
     html += segs.map((s, i) =>
@@ -371,9 +406,18 @@
       refresh();
     };
   });
-  ["n", "segments", "inset", "bleed"].forEach((id) => {
+  ["n", "inset", "bleed"].forEach((id) => {
     $(id).addEventListener("input", refresh);
   });
+  segmentList.addEventListener("input", () => {
+    showErr("");
+    refresh();
+  });
+  $("add-segment").onclick = () => {
+    addSegmentRow().focus();
+    showErr("");
+    refresh();
+  };
   addBorder.addEventListener("change", refresh);
 
   async function upload(file) {
@@ -444,7 +488,14 @@
     showOk("");
     const body = { mode: currentMode() };
     if (body.mode === "equal") body.n = parseInt($("n").value, 10);
-    if (body.mode === "custom") body.segments = $("segments").value;
+    if (body.mode === "custom") {
+      const widths = segmentWidths();
+      if (!widths) {
+        showErr(segmentHelp);
+        return;
+      }
+      body.segments = widths.join(",");
+    }
     if (body.mode === "circle") {
       body.bleed_mm = Number($("bleed").value);
     } else {
@@ -480,6 +531,7 @@
     }
   };
 
+  addSegmentRow();
   refresh();
 })();
 </script>
