@@ -130,11 +130,15 @@
             <input type="text" id="segments" placeholder="200, 200, 479.9">
             <span class="hint">mm，逗号分隔</span>
           </div>
-          <div class="row">
-            <label>外框出血</label>
+          <div class="row modes">
+            <label><input type="checkbox" id="add-border" autocomplete="off"> 生成外轮廓</label>
+          </div>
+          <div class="row hide" id="row-inset">
+            <label for="inset">外框出血</label>
             <input type="number" id="inset" min="0" step="0.1" value="0.3">
             <span class="hint">mm / 边</span>
           </div>
+          <p class="hint hide" id="existing-cut">首页已有 CUT 专色，该页只追加分段线。</p>
         </div>
 
         <div id="panel-circle" class="hide">
@@ -171,6 +175,8 @@
   const infoEl = $("info");
   const msgEl = $("msg");
   const go = $("go");
+  const addBorder = $("add-border");
+  const insetInput = $("inset");
   const cv = $("cv");
   const ctx = cv.getContext("2d");
   const pempty = $("pempty");
@@ -311,9 +317,11 @@
         ctx.stroke();
       }
     } else {
-      const inset = Number($("inset").value);
-      if (Number.isFinite(inset)) {
-        ctx.strokeRect(inset * mm, inset * mm, (session.w_mm - 2 * inset) * mm, (session.h_mm - 2 * inset) * mm);
+      if (addBorder.checked && !session.first_page_has_cut) {
+        const inset = insetInput.valueAsNumber;
+        if (Number.isFinite(inset) && inset >= 0) {
+          ctx.strokeRect(inset * mm, inset * mm, (session.w_mm - 2 * inset) * mm, (session.h_mm - 2 * inset) * mm);
+        }
       }
       for (const x of positions()) {
         const px = x * mm;
@@ -326,6 +334,8 @@
   }
 
   function refresh() {
+    $("row-inset").classList.toggle("hide", !addBorder.checked);
+    $("existing-cut").classList.toggle("hide", !(addBorder.checked && session?.first_page_has_cut));
     fillInfo();
     draw();
     go.disabled = !session;
@@ -354,6 +364,7 @@
   ["n", "segments", "inset", "bleed"].forEach((id) => {
     $(id).addEventListener("input", refresh);
   });
+  addBorder.addEventListener("change", refresh);
 
   async function upload(file) {
     showErr("");
@@ -424,8 +435,12 @@
     const body = { mode: currentMode() };
     if (body.mode === "equal") body.n = parseInt($("n").value, 10);
     if (body.mode === "custom") body.segments = $("segments").value;
-    if (body.mode === "circle") body.bleed_mm = Number($("bleed").value);
-    else body.inset_mm = Number($("inset").value);
+    if (body.mode === "circle") {
+      body.bleed_mm = Number($("bleed").value);
+    } else {
+      body.add_border = addBorder.checked;
+      if (body.add_border) body.inset_mm = insetInput.valueAsNumber;
+    }
     go.disabled = true;
     try {
       const res = await fetch(`/api/sessions/${session.id}/cut`, {

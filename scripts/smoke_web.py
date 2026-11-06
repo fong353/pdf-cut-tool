@@ -1,4 +1,4 @@
-"""本机冒烟：空白页竖切后必须带 /Separation /CUT。不走 HTTP、不占端口。"""
+"""本机冒烟：核对竖切 PDF 的 CUT 专色、分段线和可选外框。"""
 from __future__ import annotations
 
 import sys
@@ -42,9 +42,14 @@ def main() -> None:
         pdf.add_blank_page(page_size=(w, h))
         pdf.save(src)
         pdf.close()
-        add_vertical_cuts(str(src), [50.0, 100.0, 150.0], str(out), inset_mm=0.3)
-        with pikepdf.open(out) as cut:
-            assert _has_cut(cut.pages[0]), "输出缺少 /Separation /CUT"
+        for add_border in (False, True):
+            add_vertical_cuts(str(src), [50.0, 100.0, 150.0], str(out), add_border=add_border)
+            with pikepdf.open(out) as cut:
+                page = cut.pages[0]
+                assert _has_cut(page), "输出缺少 /Separation /CUT"
+                ops = [str(op) for _, op in pikepdf.parse_content_stream(page)]
+                assert ops.count("m") == ops.count("l") == 3
+                assert ops.count("re") == int(add_border)
     print("ok")
 
 

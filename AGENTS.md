@@ -43,18 +43,20 @@ pyproject.toml              # uv 依赖（含 FastAPI）
 ### `ensure_cut_cs(page)`
 检查页面是否已有 `/Separation /CUT` colorspace。有则复用（返回 `is_new=False`），无则新建 `/CS_CUT`（返回 `is_new=True`）。
 
-### `add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3)`
+### `add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3, *, add_border=True)`
 主函数。流程：
 1. 检测/创建 CUT 专色
 2. 在 Properties 注册新 CUT 图层（`/MC1`, `/MC2`...，自动避开已有项）
-3. 生成 CUT 内容流（外框 + 竖线）
+3. 生成竖切线。仅在 `add_border=True` 且当前页原本没有 CUT 专色时新增外框。
 4. 删除页面 `/PieceInfo`（Illustrator 私有元数据，若保留则 Illustrator 会忽略我们写入的内容流）
 5. 将新流追加到 Contents 数组，**原始流完全不动**
 
 ### `inset_mm`（出血收缩）
-外框矩形向内收缩，仅作用于 `is_new=True` 时新建的边框。竖切线始终延伸全页高度。
+外框矩形向内收缩。竖切线始终延伸全页高度。
 
 ## UI 模式
+
+**竖切折页**默认只加竖切线。勾选「生成外轮廓」后显示「外框出血」，初始值为每边 0.3 mm。
 
 **等分模式**：输入份数 N，自动在 `width/N * i`（i=1..N-1）处切割。
 

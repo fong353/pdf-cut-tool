@@ -45,19 +45,27 @@ def image_to_pdf(image_path, w_mm, h_mm):
     return tmp
 
 
+def find_cut_cs(page):
+    resources = page.get('/Resources', Dictionary())
+    colorspaces = resources.get('/ColorSpace', Dictionary())
+    for key, cs in colorspaces.items():
+        if isinstance(cs, Array) and len(cs) >= 2:
+            if str(cs[0]) == '/Separation' and str(cs[1]) == '/CUT':
+                return key.lstrip('/')
+    return None
+
+
 def ensure_cut_cs(page):
+    existing = find_cut_cs(page)
+    if existing is not None:
+        return existing, False
+
     if '/Resources' not in page:
         page['/Resources'] = Dictionary()
     res = page['/Resources']
     if '/ColorSpace' not in res:
         res['/ColorSpace'] = Dictionary()
     cs_dict = res['/ColorSpace']
-
-    for key in cs_dict.keys():
-        cs = cs_dict[key]
-        if isinstance(cs, Array) and len(cs) >= 2:
-            if str(cs[0]) == '/Separation' and str(cs[1]) == '/CUT':
-                return key.lstrip('/'), False
 
     tint_fn = Dictionary(
         FunctionType=2,
@@ -114,7 +122,7 @@ def build_cut_stream(mc_key, cs_name, positions_pt, x0, y0, x1, y1,
     return b'\n'.join(lines)
 
 
-def add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3):
+def add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3, *, add_border=True):
     with pikepdf.open(pdf_path) as pdf:
         for page in pdf.pages:
             mb = page.mediabox
@@ -126,7 +134,7 @@ def add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3):
             positions_pt = [x0 + p * PT_PER_MM for p in positions_mm]
             inset_pt = inset_mm * PT_PER_MM
             cut_data = build_cut_stream(mc_key, cs_name, positions_pt, x0, y0, x1, y1,
-                                        add_border=is_new, inset_pt=inset_pt)
+                                        add_border=add_border and is_new, inset_pt=inset_pt)
             new_stream = pdf.make_stream(cut_data)
 
             # 去掉 AI 私有元数据，否则 Illustrator 会忽略我们写入的内容流

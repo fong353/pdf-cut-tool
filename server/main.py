@@ -8,6 +8,7 @@ CUT 注入是毫秒～数秒,生成接口同步返回文件,不抄 GPU 队列。
 
 from __future__ import annotations
 
+import math
 import shutil
 import sys
 import threading
@@ -31,6 +32,7 @@ from pdf_ops import (
     PT_PER_MM,
     add_circle_cut,
     add_vertical_cuts,
+    find_cut_cs,
     image_to_pdf,
     is_image,
     read_image_size_mm,
@@ -124,13 +126,13 @@ def _session_or_404(session_id: str) -> dict:
     return session
 
 
-def _page_size_mm(pdf_path: Path) -> tuple[float, float, int]:
+def _page_info(pdf_path: Path) -> tuple[float, float, int, bool]:
     with pikepdf.open(pdf_path) as pdf:
-        n = len(pdf.pages)
-        mb = pdf.pages[0].mediabox
+        page = pdf.pages[0]
+        mb = page.mediabox
         w_mm = (float(mb[2]) - float(mb[0])) / PT_PER_MM
         h_mm = (float(mb[3]) - float(mb[1])) / PT_PER_MM
-    return w_mm, h_mm, n
+        return w_mm, h_mm, len(pdf.pages), find_cut_cs(page) is not None
 
 
 def _render_preview(pdf_path: Path, out_png: Path) -> None:
@@ -153,6 +155,7 @@ class CutBody(BaseModel):
     mode: str = Field(..., description="equal | custom | circle")
     n: int | None = None
     segments: str | None = None
+    add_border: bool = False
     inset_mm: float | None = None
     bleed_mm: float | None = None
 
@@ -197,8 +200,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
             shutil.move(tmp, pdf_path)
         else:
             shutil.move(str(upload_path), pdf_path)
-            w_mm, h_mm, _ = _page_size_mm(pdf_path)
-        w_mm, h_mm, page_count = _page_size_mm(pdf_path)
+        w_mm, h_mm, page_count, first_page_has_cut = _page_info(pdf_path)
         preview_path = sdir / "preview.png"
         _render_preview(pdf_path, preview_path)
     except HTTPException:
@@ -227,6 +229,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
         "w_mm": round(w_mm, 3),
         "h_mm": round(h_mm, 3),
         "page_count": page_count,
+        "first_page_has_cut": first_page_has_cut,
         "suggest": "circle" if abs(w_mm - h_mm) < 1.0 else "vertical",
         "preview_url": f"/api/sessions/{sid}/preview",
     }
@@ -248,26 +251,22 @@ def session_cut(session_id: str, body: CutBody) -> FileResponse:
     w_mm = session["w_mm"]
     h_mm = session["h_mm"]
     out_name = _cut_filename(session["src_name"])
-    out_path = Path(session["pdf_path"]).parent / out_name
+    out_path = pdf_path.parent / f"cut-{uuid.uuid4().hex}.pdf"
 
     try:
-        if body.mode == "equal":
-            n = int(body.n or 0)
-            positions = equal_positions(w_mm, n)
-            if not positions:
-                raise ValueError("请输入份数(至少 2)")
-            inset = body.inset_mm
-            if inset is None:
-                raise ValueError("外框出血未填写")
-            add_vertical_cuts(str(pdf_path), positions, str(out_path), inset_mm=inset)
-        elif body.mode == "custom":
-            if not body.segments or not body.segments.strip():
-                raise ValueError("请输入段宽，如: 200, 200, 479.9")
-            _, cuts, _ = parse_custom_segments(body.segments, w_mm)
-            inset = body.inset_mm
-            if inset is None:
-                raise ValueError("外框出血未填写")
-            add_vertical_cuts(str(pdf_path), cuts, str(out_path), inset_mm=inset)
+        if body.mode in ("equal", "custom"):
+            if body.mode == "equal":
+                positions = equal_positions(w_mm, body.n or 0)
+                if not positions:
+                    raise ValueError("请输入份数(至少 2)")
+            else:
+                _, positions, _ = parse_custom_segments(body.segments or "", w_mm)
+            inset = body.inset_mm if body.add_border else 0.0
+            if inset is None or not math.isfinite(inset) or inset < 0:
+                raise ValueError("请输入有效的外框出血（至少 0 mm）")
+            add_vertical_cuts(
+                str(pdf_path), positions, str(out_path), inset_mm=inset, add_border=body.add_border,
+            )
         elif body.mode == "circle":
             bleed = body.bleed_mm
             if bleed is None:
