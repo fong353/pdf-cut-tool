@@ -258,9 +258,10 @@
         infoEl.innerHTML = '<span class="muted">（请输入份数）</span>';
         return;
       }
-      infoEl.textContent = pos.map((p, i) =>
+      const cutPoints = pos.map((p, i) =>
         `  ${String(i + 1).padStart(2)}.  x = ${p.toFixed(2).padStart(7)} mm`
       ).join("\n");
+      infoEl.textContent = `${cutPoints}\n  每块尺寸：${pos[0].toFixed(2)} × ${session.h_mm.toFixed(2)} mm（${pos.length + 1} 块）`;
       return;
     }
     const segs = parseSegs($("segments").value);
