@@ -82,6 +82,7 @@
   #go:hover { background: var(--brand-dk); }
   #go:disabled { background: #b9c4d0; cursor: not-allowed; }
   .errline { color: var(--err); background: #fdf0f0; border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  #segment-overflow:empty { display: none; }
   .okline { color: var(--ok); font-weight: 600; margin-top: 10px; font-size: 14px; }
   .preview-card { min-height: 420px; }
   .preview-wrap {
@@ -144,6 +145,7 @@
               </div>
             </template>
             <button type="button" id="add-segment" class="segment-action">＋ 添加一段</button>
+            <div class="errline" id="segment-overflow" role="status"></div>
           </div>
           <div class="row modes">
             <label>
@@ -196,6 +198,7 @@
   const segmentList = $("segments");
   const segmentTemplate = $("segment-template");
   const segmentHelp = "请填写每段宽度（mm），数值须大于 0";
+  const widthTolerance = 1e-9; // 与生成接口一致，只忽略浮点运算误差。
   const addBorder = $("add-border");
   const insetInput = $("inset");
   const cv = $("cv");
@@ -270,6 +273,33 @@
     return cuts;
   }
 
+  function customWidthLimit() {
+    return session.min_page_w_mm ?? session.w_mm;
+  }
+
+  function inBoundsCuts(cuts) {
+    const limit = customWidthLimit();
+    return cuts.filter((x) => x - limit <= widthTolerance);
+  }
+
+  function updateSegmentWarning() {
+    const cuts = session && currentMode() === "custom" ? positions() : [];
+    let message = "";
+    if (cuts.length) {
+      const limit = customWidthLimit();
+      const excess = cuts[cuts.length - 1] - limit;
+      if (excess > widthTolerance) {
+        const amount = excess >= 0.01 ? `${excess.toFixed(2)} mm` : "不到 0.01 mm";
+        const source = session.page_count > 1 ? "最窄页" : "原稿";
+        message = Number.isFinite(excess)
+          ? `段宽合计超出${source}宽度 ${amount}（限 ${limit.toFixed(2)} mm）。`
+          : `段宽合计超出${source}宽度。`;
+      }
+    }
+    $("segment-overflow").textContent = message;
+    return Boolean(message);
+  }
+
   function fillInfo() {
     if (!session) {
       infoEl.innerHTML = '<span class="muted">（请先选择 PDF 或图片）</span>';
@@ -316,21 +346,22 @@
       return;
     }
     const cuts = positions(segs);
+    const visibleCuts = inBoundsCuts(cuts);
     const remaining = session.w_mm - cuts[cuts.length - 1];
     const warn = remaining > 0 && remaining < 100;
     let html = '<span class="muted">  段宽：</span>\n';
     html += segs.map((s, i) =>
       `    ${String(i + 1).padStart(2)}.  ${s.toFixed(2).padStart(7)} mm`
     ).join("\n");
-    if (remaining !== 0) {
+    if (visibleCuts.length === cuts.length && remaining > widthTolerance) {
       html += `\n\n<span class="muted">  剩余：</span>`;
       html += warn
         ? `<span class="warn"> ${remaining.toFixed(2)} mm   ⚠ 尾料不足 10cm</span>`
         : ` ${remaining.toFixed(2)} mm`;
     }
-    if (cuts.length) {
+    if (visibleCuts.length) {
       html += `\n\n<span class="muted">  切割位置：</span>\n`;
-      html += cuts.map((x) => `    x = ${x.toFixed(2).padStart(7)} mm`).join("\n");
+      html += visibleCuts.map((x) => `    x = ${x.toFixed(2).padStart(7)} mm`).join("\n");
     }
     infoEl.innerHTML = html;
   }
@@ -368,7 +399,8 @@
           ctx.strokeRect(inset * mm, inset * mm, (session.w_mm - 2 * inset) * mm, (session.h_mm - 2 * inset) * mm);
         }
       }
-      for (const x of positions()) {
+      const cuts = positions();
+      for (const x of mode === "custom" ? inBoundsCuts(cuts) : cuts) {
         const px = x * mm;
         ctx.beginPath();
         ctx.moveTo(px, 0);
@@ -383,7 +415,7 @@
     $("existing-cut").classList.toggle("hide", !(addBorder.checked && session?.first_page_has_cut));
     fillInfo();
     draw();
-    go.disabled = !session;
+    go.disabled = updateSegmentWarning() || !session;
     go.textContent = tool === "circle" ? "生成圆切 PDF" : "生成竖切 PDF";
   }
 
@@ -448,7 +480,7 @@
       setTool(data.suggest === "circle" ? "circle" : "vertical");
     } catch (e) {
       showErr(e.message || String(e));
-      go.disabled = !session;
+      refresh();
     } finally {
       drop.querySelector(".big").textContent = "拖到这里，或点击选择";
     }
@@ -483,7 +515,7 @@
   window.addEventListener("resize", () => { if (img) draw(); });
 
   go.onclick = async () => {
-    if (!session) return;
+    if (!session || go.disabled) return;
     showErr("");
     showOk("");
     const body = { mode: currentMode() };
@@ -527,7 +559,7 @@
     } catch (e) {
       showErr(e.message || String(e));
     } finally {
-      go.disabled = !session;
+      refresh();
     }
   };
 

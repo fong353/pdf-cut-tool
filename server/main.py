@@ -45,6 +45,7 @@ MAX_UPLOAD = 80 * 1024 * 1024
 KEEP_DAYS = 1
 CLEAN_INTERVAL = 3600
 PREVIEW_MAX_PX = 1600
+WIDTH_TOLERANCE_MM = 1e-9
 ALLOWED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 
 app = FastAPI(title="PDF切割线", docs_url=None, redoc_url=None)
@@ -69,11 +70,20 @@ def parse_custom_segments(raw: str, width_mm: float) -> tuple[list[float], list[
     cuts: list[float] = []
     total = 0.0
     for s in segs:
-        if s <= 0:
+        if not math.isfinite(s) or s <= 0:
             raise ValueError("段宽必须大于 0")
         total += s
         cuts.append(total)
     remaining = width_mm - total
+    if not math.isfinite(total):
+        raise ValueError("段宽合计超出允许宽度")
+    if remaining < -WIDTH_TOLERANCE_MM:
+        excess = -remaining
+        amount = f"{excess:.2f} mm" if excess >= 0.01 else "不到 0.01 mm"
+        raise ValueError(f"段宽合计超出允许宽度 {amount}")
+    if remaining < 0:
+        cuts[-1] = width_mm
+        remaining = 0.0
     return segs, cuts, remaining
 
 
@@ -126,13 +136,17 @@ def _session_or_404(session_id: str) -> dict:
     return session
 
 
-def _page_info(pdf_path: Path) -> tuple[float, float, int, bool]:
+def _page_info(pdf_path: Path) -> tuple[float, float, int, bool, float]:
     with pikepdf.open(pdf_path) as pdf:
         page = pdf.pages[0]
         mb = page.mediabox
         w_mm = (float(mb[2]) - float(mb[0])) / PT_PER_MM
         h_mm = (float(mb[3]) - float(mb[1])) / PT_PER_MM
-        return w_mm, h_mm, len(pdf.pages), find_cut_cs(page) is not None
+        min_width = w_mm
+        for other in pdf.pages[1:]:
+            left, _, right, _ = other.mediabox
+            min_width = min(min_width, (float(right) - float(left)) / PT_PER_MM)
+        return w_mm, h_mm, len(pdf.pages), find_cut_cs(page) is not None, min_width
 
 
 def _render_preview(pdf_path: Path, out_png: Path) -> None:
@@ -200,7 +214,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
             shutil.move(tmp, pdf_path)
         else:
             shutil.move(str(upload_path), pdf_path)
-        w_mm, h_mm, page_count, first_page_has_cut = _page_info(pdf_path)
+        w_mm, h_mm, page_count, first_page_has_cut, min_page_w_mm = _page_info(pdf_path)
         preview_path = sdir / "preview.png"
         _render_preview(pdf_path, preview_path)
     except HTTPException:
@@ -217,6 +231,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
         "preview_path": str(preview_path),
         "w_mm": w_mm,
         "h_mm": h_mm,
+        "min_page_w_mm": min_page_w_mm,
         "page_count": page_count,
         "created_at": time.time(),
     }
@@ -228,6 +243,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
         "name": orig,
         "w_mm": round(w_mm, 3),
         "h_mm": round(h_mm, 3),
+        "min_page_w_mm": min_page_w_mm,
         "page_count": page_count,
         "first_page_has_cut": first_page_has_cut,
         "suggest": "circle" if abs(w_mm - h_mm) < 1.0 else "vertical",
@@ -260,7 +276,7 @@ def session_cut(session_id: str, body: CutBody) -> FileResponse:
                 if not positions:
                     raise ValueError("请输入份数(至少 2)")
             else:
-                _, positions, _ = parse_custom_segments(body.segments or "", w_mm)
+                _, positions, _ = parse_custom_segments(body.segments or "", session["min_page_w_mm"])
             inset = body.inset_mm if body.add_border else 0.0
             if inset is None or not math.isfinite(inset) or inset < 0:
                 raise ValueError("请输入有效的外框出血（至少 0 mm）")
