@@ -300,6 +300,10 @@
     return Boolean(message);
   }
 
+  function circleRadius(bleed) {
+    return Math.min(session.w_mm, session.h_mm) / 2 - bleed;
+  }
+
   function fillInfo() {
     if (!session) {
       infoEl.innerHTML = '<span class="muted">（请先选择 PDF 或图片）</span>';
@@ -307,8 +311,7 @@
     }
     if (tool === "circle") {
       const bleed = Number($("bleed").value);
-      const side = Math.min(session.w_mm, session.h_mm);
-      const r = side / 2 - bleed;
+      const r = circleRadius(bleed);
       if (!Number.isFinite(bleed) || r <= 0) {
         infoEl.innerHTML = `<span class="warn">  出血 ${$("bleed").value}mm 过大，圆半径 ≤ 0</span>`;
         return;
@@ -366,6 +369,51 @@
     infoEl.innerHTML = html;
   }
 
+  function drawCircleDimensions(cx, cy, radius, radiusMm, width, height) {
+    const ink = "#075985";
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx - radius, cy);
+    ctx.lineTo(cx + radius, cy);
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx, cy - radius);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = ink;
+    ctx.stroke();
+    ctx.fillStyle = ink;
+    ctx.fillRect(cx - 2, cy - 2, 4, 4);
+
+    ctx.font = "600 13px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#fff";
+    ctx.setLineDash([]);
+    const diameterText = `直径 ${(radiusMm * 2).toFixed(2)} mm`;
+    const radiusText = `半径 ${radiusMm.toFixed(2)} mm`;
+    const labels = height < 40
+      ? [{ text: `${diameterText} · ${radiusText}`, x: cx, y: cy, centered: true }]
+      : [
+          { text: diameterText, x: cx, y: cy + 14, centered: true },
+          { text: radiusText, x: cx + 8, y: cy - Math.max(radius / 2, 12), centered: false },
+        ];
+    const padding = Math.min(6, width / 8);
+    const verticalPadding = Math.min(9, height / 2);
+    for (const { text, x, y, centered } of labels) {
+      const labelWidth = Math.min(ctx.measureText(text).width, width - 2 * padding);
+      const preferredLeft = centered ? x - labelWidth / 2 : x;
+      const left = Math.max(padding, Math.min(preferredLeft, width - labelWidth - padding));
+      const baseline = Math.max(verticalPadding, Math.min(y, height - verticalPadding));
+      ctx.strokeText(text, left, baseline, labelWidth);
+      ctx.fillText(text, left, baseline, labelWidth);
+    }
+    ctx.restore();
+  }
+
   function draw() {
     if (!img || !session) return;
     const maxW = $("pwrap").clientWidth - 8;
@@ -385,12 +433,15 @@
     ctx.strokeStyle = "#e60000";
     ctx.lineWidth = 1;
     if (tool === "circle") {
-      const bleed = Number($("bleed").value);
-      const r = Math.min(session.w_mm, session.h_mm) / 2 - bleed;
-      if (r > 0) {
+      const radiusMm = circleRadius(Number($("bleed").value));
+      if (Number.isFinite(radiusMm) && radiusMm > 0) {
+        const cx = session.w_mm / 2 * mm;
+        const cy = session.h_mm / 2 * mm;
+        const radius = radiusMm * mm;
         ctx.beginPath();
-        ctx.arc(session.w_mm / 2 * mm, session.h_mm / 2 * mm, r * mm, 0, Math.PI * 2);
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.stroke();
+        drawCircleDimensions(cx, cy, radius, radiusMm, w, h);
       }
     } else {
       if (addBorder.checked && !session.first_page_has_cut) {
