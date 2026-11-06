@@ -36,6 +36,7 @@ from pdf_ops import (
     image_to_pdf,
     is_image,
     read_image_size_mm,
+    page_geometry,
 )
 
 DATA_DIR = REPO_ROOT / "data" / "jobs"
@@ -136,17 +137,14 @@ def _session_or_404(session_id: str) -> dict:
     return session
 
 
-def _page_info(pdf_path: Path) -> tuple[float, float, int, bool, float]:
+def _page_info(pdf_path: Path) -> tuple[float, float, int, bool, float, float]:
     with pikepdf.open(pdf_path) as pdf:
         page = pdf.pages[0]
-        mb = page.mediabox
-        w_mm = (float(mb[2]) - float(mb[0])) / PT_PER_MM
-        h_mm = (float(mb[3]) - float(mb[1])) / PT_PER_MM
-        min_width = w_mm
-        for other in pdf.pages[1:]:
-            left, _, right, _ = other.mediabox
-            min_width = min(min_width, (float(right) - float(left)) / PT_PER_MM)
-        return w_mm, h_mm, len(pdf.pages), find_cut_cs(page) is not None, min_width
+        sizes = [page_geometry(item)[:2] for item in pdf.pages]
+        w_mm, h_mm = (value / PT_PER_MM for value in sizes[0])
+        min_width = min(width for width, _ in sizes) / PT_PER_MM
+        min_side = min(min(size) for size in sizes) / PT_PER_MM
+        return w_mm, h_mm, len(pdf.pages), find_cut_cs(page) is not None, min_width, min_side
 
 
 def _render_preview(pdf_path: Path, out_png: Path) -> None:
@@ -214,7 +212,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
             shutil.move(tmp, pdf_path)
         else:
             shutil.move(str(upload_path), pdf_path)
-        w_mm, h_mm, page_count, first_page_has_cut, min_page_w_mm = _page_info(pdf_path)
+        w_mm, h_mm, page_count, first_page_has_cut, min_page_w_mm, min_page_side_mm = _page_info(pdf_path)
         preview_path = sdir / "preview.png"
         _render_preview(pdf_path, preview_path)
     except HTTPException:
@@ -232,6 +230,7 @@ async def create_session(file: UploadFile = File(...)) -> dict:
         "w_mm": w_mm,
         "h_mm": h_mm,
         "min_page_w_mm": min_page_w_mm,
+        "min_page_side_mm": min_page_side_mm,
         "page_count": page_count,
         "created_at": time.time(),
     }
@@ -241,9 +240,10 @@ async def create_session(file: UploadFile = File(...)) -> dict:
     return {
         "id": sid,
         "name": orig,
-        "w_mm": round(w_mm, 3),
-        "h_mm": round(h_mm, 3),
+        "w_mm": w_mm,
+        "h_mm": h_mm,
         "min_page_w_mm": min_page_w_mm,
+        "min_page_side_mm": min_page_side_mm,
         "page_count": page_count,
         "first_page_has_cut": first_page_has_cut,
         "suggest": "circle" if abs(w_mm - h_mm) < 1.0 else "vertical",
@@ -282,6 +282,7 @@ def session_cut(session_id: str, body: CutBody) -> FileResponse:
                 raise ValueError("请输入有效的外框出血（至少 0 mm）")
             add_vertical_cuts(
                 str(pdf_path), positions, str(out_path), inset_mm=inset, add_border=body.add_border,
+                equal_parts=body.n if body.mode == "equal" else None,
             )
         elif body.mode == "circle":
             bleed = body.bleed_mm

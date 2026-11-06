@@ -14,7 +14,7 @@
 ```
 server/main.py              # FastAPI 薄封装（上传 / 预览 / 生成）
 server/static/index.html    # 单页 UI
-pdf_ops.py                  # PDF 处理（切割线生成，机器识别验证过，字节级稳定，不要动）
+pdf_ops.py                  # PDF 处理（切割线生成，变更后须检查原稿保留与实际刀线）
 cut_tool.py / preview.py    # 旧 tkinter 桌面，本机兜底，不是员工入口
 deploy/com.dayin.pdf-cut-tool.plist
 pyproject.toml              # uv 依赖（含 FastAPI）
@@ -24,7 +24,7 @@ pyproject.toml              # uv 依赖（含 FastAPI）
 
 **PDF 页面尺寸 = MediaBox**：进入本工具的 PDF 只有 MediaBox，没有 TrimBox / BleedBox / ArtBox / CropBox。
 员工在交付前会把文件改成这样。所有代码直接信任 `page.mediabox` 作为物理纸张尺寸，
-不需要 fallback 读其他 box。
+不需要 fallback 读其他 box。显示方向和物理尺寸同时计入 Rotate 与 UserUnit。
 
 ## 核心概念
 
@@ -46,10 +46,11 @@ pyproject.toml              # uv 依赖（含 FastAPI）
 ### `add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3, *, add_border=True)`
 主函数。流程：
 1. 检测/创建 CUT 专色
-2. 在 Properties 注册新 CUT 图层（`/MC1`, `/MC2`...，自动避开已有项）
+2. 在独立的页面资源表里注册 CUT 图层与专色，避开已有资源名。
 3. 生成竖切线。仅在 `add_border=True` 且当前页原本没有 CUT 专色时新增外框。
 4. 删除页面 `/PieceInfo`（Illustrator 私有元数据，若保留则 Illustrator 会忽略我们写入的内容流）
-5. 将新流追加到 Contents 数组，**原始流完全不动**
+5. 在原稿内容前后添加绘图状态隔离，并按页面旋转、UserUnit 和 MediaBox 原点映射新刀线。
+   原稿内容流的字节及图片、ICC 资源保留。
 
 ### `inset_mm`（出血收缩）
 外框矩形向内收缩。竖切线始终延伸全页高度。
@@ -58,14 +59,18 @@ pyproject.toml              # uv 依赖（含 FastAPI）
 
 **竖切折页**默认只加竖切线。勾选「生成外轮廓」后显示「外框出血」，初始值为每边 0.3 mm。
 
-**等分模式**：输入份数 N，自动在 `width/N * i`（i=1..N-1）处切割。
+**等分模式**：输入份数 N，按每页显示方向的物理宽度，在 `width/N * i`（i=1..N-1）处切割。
 
 **自定义模式**：每段宽度（mm）填在独立输入框，使用「＋ 添加一段」和「−」增删。
 - 段宽合计超出原稿宽度时就地显示超出量，并暂停生成。多页 PDF 以最窄页宽度为限。
-- 计算累计切割位置
+- 计算累计切割位置，只在每页内部生成分隔线，恰好落在纸边的端点跳过。
 - 显示剩余量；剩余 < 100mm 红字警告
 
 **圆切贴纸**：圆心=页中心，半径 = min(宽,高)/2 − 出血 mm。方图（|w−h|&lt;1mm）上传后自动切到此 tab。
+
+圆切及外框出血须为有限非负数，并小于所有页面最短边的一半。页面就地提示，导出再次校验。
+图片须有明确的物理分辨率元数据；JPEG 的默认 72 DPI 和 TIFF 的默认 1 DPI 不作为真实尺寸来源。
+横纵 DPI 不同时，按各轴的物理尺寸铺满页面。回归运行 `uv run python scripts/test_cut_geometry.py`。
 
 ## 兼容性说明
 

@@ -169,6 +169,7 @@
           </div>
         </div>
 
+        <div class="errline hide" id="cut-error" role="status"></div>
         <div class="info" id="info"><span class="muted">（请先选择 PDF 或图片）</span></div>
         <button type="button" id="go" disabled>生成竖切 PDF</button>
         <div id="msg"></div>
@@ -270,7 +271,7 @@
       total += s;
       cuts.push(total);
     }
-    return cuts;
+    return cuts.filter((x) => Math.abs(x - session.w_mm) > widthTolerance);
   }
 
   function customWidthLimit() {
@@ -283,11 +284,11 @@
   }
 
   function updateSegmentWarning() {
-    const cuts = session && currentMode() === "custom" ? positions() : [];
+    const widths = session && currentMode() === "custom" ? segmentWidths() : null;
     let message = "";
-    if (cuts.length) {
+    if (widths) {
       const limit = customWidthLimit();
-      const excess = cuts[cuts.length - 1] - limit;
+      const excess = widths.reduce((sum, value) => sum + value, 0) - limit;
       if (excess > widthTolerance) {
         const amount = excess >= 0.01 ? `${excess.toFixed(2)} mm` : "不到 0.01 mm";
         const source = session.page_count > 1 ? "最窄页" : "原稿";
@@ -350,7 +351,7 @@
     }
     const cuts = positions(segs);
     const visibleCuts = inBoundsCuts(cuts);
-    const remaining = session.w_mm - cuts[cuts.length - 1];
+    const remaining = session.w_mm - segs.reduce((sum, value) => sum + value, 0);
     const warn = remaining > 0 && remaining < 100;
     let html = '<span class="muted">  段宽：</span>\n';
     html += segs.map((s, i) =>
@@ -446,7 +447,7 @@
     } else {
       if (addBorder.checked && !session.first_page_has_cut) {
         const inset = insetInput.valueAsNumber;
-        if (Number.isFinite(inset) && inset >= 0) {
+        if (Number.isFinite(inset) && inset >= 0 && inset * 2 < Math.min(session.w_mm, session.h_mm)) {
           ctx.strokeRect(inset * mm, inset * mm, (session.w_mm - 2 * inset) * mm, (session.h_mm - 2 * inset) * mm);
         }
       }
@@ -466,7 +467,20 @@
     $("existing-cut").classList.toggle("hide", !(addBorder.checked && session?.first_page_has_cut));
     fillInfo();
     draw();
-    go.disabled = updateSegmentWarning() || !session;
+    let error = "";
+    if (session) {
+      const limit = (session.min_page_side_mm ?? Math.min(session.w_mm, session.h_mm)) / 2;
+      const isCircle = tool === "circle";
+      if (isCircle || addBorder.checked) {
+        const value = isCircle ? $("bleed").valueAsNumber : insetInput.valueAsNumber;
+        if (!Number.isFinite(value) || value < 0 || value >= limit) {
+          error = `${isCircle ? "圆切出血" : "外框出血"}须大于等于 0，且小于 ${limit.toFixed(2)} mm。`;
+        }
+      }
+    }
+    $("cut-error").textContent = error;
+    $("cut-error").classList.toggle("hide", !error);
+    go.disabled = updateSegmentWarning() || !session || Boolean(error);
     go.textContent = tool === "circle" ? "生成圆切 PDF" : "生成竖切 PDF";
   }
 

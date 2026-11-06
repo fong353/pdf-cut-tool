@@ -1,4 +1,5 @@
 import os
+import math
 import tempfile
 
 import pikepdf
@@ -19,7 +20,27 @@ def read_image_size_mm(image_path):
     with Image.open(image_path) as img:
         w_px, h_px = img.size
         dpi = img.info.get('dpi')
-    if not dpi or dpi[0] == 0 or dpi[1] == 0:
+        if img.format == 'JPEG':
+            unit = img.info.get('jfif_unit')
+            density = img.info.get('jfif_density')
+            dpi = None
+            if unit in (1, 2) and density:
+                factor = 2.54 if unit == 2 else 1
+                dpi = tuple(float(value) * factor for value in density)
+            else:
+                exif = img.getexif()
+                unit = exif.get(296)
+                if unit in (2, 3) and exif.get(282) and exif.get(283):
+                    factor = 2.54 if unit == 3 else 1
+                    dpi = (float(exif[282]) * factor, float(exif[283]) * factor)
+        elif img.format == 'TIFF':
+            tags = img.tag_v2
+            dpi = None
+            unit = tags.get(296, 2)
+            if unit in (2, 3) and tags.get(282) and tags.get(283):
+                factor = 2.54 if unit == 3 else 1
+                dpi = (float(tags[282]) * factor, float(tags[283]) * factor)
+    if not dpi or any(not math.isfinite(float(value)) or float(value) <= 0 for value in dpi):
         raise ValueError(
             f'图片无 DPI 信息（或为 0）：{os.path.basename(image_path)}\n'
             '请在 PS 里用"图像 → 图像大小"设置物理尺寸后再导入。'
@@ -37,7 +58,7 @@ def image_to_pdf(image_path, w_mm, h_mm):
     hp = h_mm * PT_PER_MM
     doc = pymupdf.open()
     page = doc.new_page(width=wp, height=hp)
-    page.insert_image(pymupdf.Rect(0, 0, wp, hp), filename=image_path)
+    page.insert_image(pymupdf.Rect(0, 0, wp, hp), filename=image_path, keep_proportion=False)
     fd, tmp = tempfile.mkstemp(suffix='.pdf', prefix='cut_img_')
     os.close(fd)
     doc.save(tmp)
@@ -75,8 +96,68 @@ def ensure_cut_cs(page):
         N=1.0,
         Range=Array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]),
     )
-    cs_dict['/CS_CUT'] = Array([Name('/Separation'), Name('/CUT'), Name('/DeviceCMYK'), tint_fn])
-    return 'CS_CUT', True
+    key = 'CS_CUT'
+    index = 1
+    while f'/{key}' in cs_dict:
+        key = f'CS_CUT_{index}'
+        index += 1
+    cs_dict[f'/{key}'] = Array([Name('/Separation'), Name('/CUT'), Name('/DeviceCMYK'), tint_fn])
+    return key, True
+
+
+def page_geometry(page):
+    """显示方向的物理尺寸（pt），以及到原 PDF 坐标的变换。"""
+    x0, y0, x1, y1 = map(float, page.mediabox)
+    unit = float(page.get('/UserUnit', 1))
+    rotation = int(page.get('/Rotate', 0)) % 360
+    if not math.isfinite(unit) or unit <= 0 or rotation not in (0, 90, 180, 270):
+        raise ValueError('PDF 页面缩放或旋转参数无效')
+    width, height = (x1 - x0) * unit, (y1 - y0) * unit
+    if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+        raise ValueError('PDF 页面尺寸无效')
+    scale = 1 / unit
+    matrices = {
+        0: (scale, 0, 0, scale, x0, y0),
+        90: (0, scale, -scale, 0, x1, y0),
+        180: (-scale, 0, 0, -scale, x1, y1),
+        270: (0, -scale, scale, 0, x0, y1),
+    }
+    if rotation in (90, 270):
+        width, height = height, width
+    return width, height, matrices[rotation]
+
+
+def _prepare_cut_resources(page):
+    # 每页独立修改资源表，避免原 PDF 的共享资源影响其他页。
+    resources = Dictionary(page.get('/Resources', Dictionary()))
+    for key in ('/ColorSpace', '/Properties'):
+        resources[key] = Dictionary(resources.get(key, Dictionary()))
+    page.Resources = resources
+    cs_name, is_new = ensure_cut_cs(page)
+    return cs_name, is_new, _add_cut_layer_prop(page)
+
+
+def _append_cut_stream(pdf, page, data, matrix):
+    depth = 0
+    for _, operator in pikepdf.parse_content_stream(page):
+        if str(operator) == 'q':
+            depth += 1
+        elif str(operator) == 'Q':
+            depth -= 1
+            if depth < 0:
+                raise ValueError('PDF 原稿的绘图状态不完整，请重新导出 PDF')
+    contents = page.get('/Contents')
+    original = list(contents) if isinstance(contents, Array) else []
+    if contents is not None and not isinstance(contents, Array):
+        original = [contents]
+    restore = b'Q\n' * (depth + 1) + b'n\n'
+    transform = ' '.join(format(value, '.12g') for value in matrix).encode() + b' cm\n'
+    page.Contents = Array([
+        pdf.make_stream(b'q\n'), *original,
+        pdf.make_stream(restore + b'q\n' + transform + data + b'\nQ\n'),
+    ])
+    if '/PieceInfo' in page:
+        del page['/PieceInfo']
 
 
 def _add_cut_layer_prop(page):
@@ -122,33 +203,26 @@ def build_cut_stream(mc_key, cs_name, positions_pt, x0, y0, x1, y1,
     return b'\n'.join(lines)
 
 
-def add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3, *, add_border=True):
+def add_vertical_cuts(pdf_path, positions_mm, out_path, inset_mm=0.3, *, add_border=True, equal_parts=None):
     with pikepdf.open(pdf_path) as pdf:
         for page in pdf.pages:
-            mb = page.mediabox
-            x0, y0 = float(mb[0]), float(mb[1])
-            x1, y1 = float(mb[2]), float(mb[3])
-
-            cs_name, is_new = ensure_cut_cs(page)
-            mc_key = _add_cut_layer_prop(page)
-            positions_pt = [x0 + p * PT_PER_MM for p in positions_mm]
-            inset_pt = inset_mm * PT_PER_MM
-            cut_data = build_cut_stream(mc_key, cs_name, positions_pt, x0, y0, x1, y1,
-                                        add_border=add_border and is_new, inset_pt=inset_pt)
-            new_stream = pdf.make_stream(cut_data)
-
-            # 去掉 AI 私有元数据，否则 Illustrator 会忽略我们写入的内容流
-            if '/PieceInfo' in page:
-                del page['/PieceInfo']
-
-            contents = page.get('/Contents')
-            if contents is None:
-                page['/Contents'] = new_stream
-            elif isinstance(contents, pikepdf.Array):
-                contents.append(new_stream)
+            width, height, matrix = page_geometry(page)
+            if equal_parts is not None:
+                if equal_parts < 2:
+                    raise ValueError('请输入份数（至少 2）')
+                positions_pt = [width * i / equal_parts for i in range(1, equal_parts)]
             else:
-                # 单流转数组，原始流完全不动
-                page['/Contents'] = pikepdf.Array([contents, new_stream])
+                positions_pt = [p * PT_PER_MM for p in positions_mm]
+            if any(not math.isfinite(p) or p < 0 or p > width + 1e-7 for p in positions_pt):
+                raise ValueError('切割位置超出页面宽度')
+            positions_pt = [p for p in positions_pt if 1e-7 < p < width - 1e-7]
+            inset_pt = inset_mm * PT_PER_MM
+            if add_border and (not math.isfinite(inset_pt) or inset_pt < 0 or 2 * inset_pt >= min(width, height)):
+                raise ValueError('外框出血须大于等于 0，且小于页面短边的一半')
+            cs_name, is_new, mc_key = _prepare_cut_resources(page)
+            cut_data = build_cut_stream(mc_key, cs_name, positions_pt, 0, 0, width, height,
+                                        add_border=add_border and is_new, inset_pt=inset_pt)
+            _append_cut_stream(pdf, page, cut_data, matrix)
 
         pdf.save(out_path)
 
@@ -276,32 +350,19 @@ def split_combine_pdf(entries, out_path):
 
 def add_circle_cut(pdf_path, bleed_mm, out_path):
     """画圆切线。圆以页面中心为圆心，半径 = min(宽, 高)/2 - bleed_mm。"""
+    if not math.isfinite(bleed_mm) or bleed_mm < 0:
+        raise ValueError('圆切出血必须是大于等于 0 的有效数值')
     with pikepdf.open(pdf_path) as pdf:
         for page in pdf.pages:
-            mb = page.mediabox
-            x0, y0 = float(mb[0]), float(mb[1])
-            x1, y1 = float(mb[2]), float(mb[3])
-            w, h = x1 - x0, y1 - y0
-            cx = (x0 + x1) / 2
-            cy = (y0 + y1) / 2
+            w, h, matrix = page_geometry(page)
+            cx = w / 2
+            cy = h / 2
             r = min(w, h) / 2 - bleed_mm * PT_PER_MM
             if r <= 0:
                 raise ValueError(f'出血 {bleed_mm}mm 过大，圆半径 ≤ 0')
 
-            cs_name, _ = ensure_cut_cs(page)
-            mc_key = _add_cut_layer_prop(page)
+            cs_name, _, mc_key = _prepare_cut_resources(page)
             cut_data = build_circle_cut_stream(mc_key, cs_name, cx, cy, r)
-            new_stream = pdf.make_stream(cut_data)
-
-            if '/PieceInfo' in page:
-                del page['/PieceInfo']
-
-            contents = page.get('/Contents')
-            if contents is None:
-                page['/Contents'] = new_stream
-            elif isinstance(contents, pikepdf.Array):
-                contents.append(new_stream)
-            else:
-                page['/Contents'] = pikepdf.Array([contents, new_stream])
+            _append_cut_stream(pdf, page, cut_data, matrix)
 
         pdf.save(out_path)
