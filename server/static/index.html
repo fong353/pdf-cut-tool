@@ -259,9 +259,15 @@
         return;
       }
       const cutPoints = pos.map((p, i) =>
-        `  ${String(i + 1).padStart(2)}.  x = ${p.toFixed(2).padStart(7)} mm`
-      ).join("\n");
-      infoEl.textContent = `${cutPoints}\n  每块尺寸：${pos[0].toFixed(2)} × ${session.h_mm.toFixed(2)} mm（${pos.length + 1} 块）`;
+        `    ${i + 1}.  x = ${p.toFixed(2)} mm`
+      );
+      const size = `${pos[0].toFixed(2)} × ${session.h_mm.toFixed(2)} mm`;
+      const pieceSizes = Array.from({ length: pos.length + 1 }, (_, i) =>
+        `    第 ${i + 1} 块：${size}`
+      );
+      infoEl.textContent = [
+        "  切割点", ...cutPoints, "", "  分块尺寸（从左到右）", ...pieceSizes
+      ].join("\n");
       return;
     }
     const segs = parseSegs($("segments").value);
